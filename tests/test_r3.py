@@ -172,5 +172,35 @@ class MultiTurn(unittest.TestCase):
         self.assertEqual(r.outcome, "need_ref")                  # never guesses which product
 
 
+class LatencyAndTokenCostReporting(unittest.TestCase):
+    def test_reply_contains_latency_and_zero_tokens(self):
+        r, _ = ask("show me top rated products in stock")
+        self.assertGreater(r.latency_ms, 0.0)
+        self.assertEqual(r.llm_tokens_in, 0)
+        self.assertEqual(r.llm_tokens_out, 0)
+        self.assertEqual(r.cost_usd, 0.0)
+
+    def test_latency_timing_breakdown_in_trace(self):
+        r, _ = ask(f"price of {FIRST.id}")
+        self.assertIn("timing", r.trace)
+        timing = r.trace["timing"]
+        self.assertIn("parse_ms", timing)
+        self.assertIn("route_ms", timing)
+        self.assertIn("validate_ms", timing)
+        self.assertIn("total_ms", timing)
+        self.assertGreater(timing["total_ms"], 0.0)
+
+    def test_assistant_measure_latency_and_cost(self):
+        queries = ["cotton shirts under 1500", "how many days to return an item?", "iPhone 17 Pro Max"]
+        report = A.measure_latency_and_cost(queries)
+        self.assertEqual(report["query_count"], 3)
+        self.assertIn("latency_ms", report)
+        self.assertGreater(report["latency_ms"]["mean"], 0.0)
+        self.assertEqual(report["token_usage"]["total_tokens"], 0)
+        self.assertEqual(report["token_usage"]["cost_usd"], 0.0)
+        self.assertTrue(report["validation"]["all_passed"])
+
+
 if __name__ == "__main__":
     unittest.main()
+

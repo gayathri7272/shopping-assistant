@@ -70,16 +70,40 @@ def pct(xs, q):
     return xs[min(len(xs) - 1, int(round(q * (len(xs) - 1))))] if xs else float("nan")
 
 
+BENCHMARK_SAMPLE = [
+    {"id": "BM-01", "turns": ["cotton shirts under 1500"], "expected": "answer"},
+    {"id": "BM-02", "turns": ["show me top rated products in stock"], "expected": "answer"},
+    {"id": "BM-03", "turns": ["what is the price of MOCK-0001?"], "expected": "answer"},
+    {"id": "BM-04", "turns": ["how many days do I have to return an item?"], "expected": "answer"},
+    {"id": "BM-05", "turns": ["do you offer gift wrapping?"], "expected": "refuse"},
+    {"id": "BM-06", "turns": ["iPhone 17 Pro Max"], "expected": "refuse"},
+    {"id": "BM-07", "turns": ["price of MOCK-9999"], "expected": "refuse"},
+    {"id": "BM-08", "turns": ["what is the battery life of MOCK-0001"], "expected": "answer"},
+    {"id": "BM-09", "turns": ["shoes"], "expected": "clarify"},
+    {"id": "BM-10", "turns": ["I want cotton clothes", "under 2000", "is the first one in stock?"], "expected": "answer"},
+    {"id": "BM-11", "turns": ["cotten shrt under 1500"], "expected": "answer"},
+    {"id": "BM-12", "turns": ["sasta joota 2000 ke andar"], "expected": "answer"},
+]
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--questions"); ap.add_argument("--limit", type=int)
+    ap.add_argument("--benchmark", action="store_true", help="Run benchmark on representative queries if organiser questions are absent")
     ap.add_argument("--out", default=str(ROOT / "reports"))
     a = ap.parse_args()
     qpath = Path(a.questions) if a.questions else config.questions_path()
+    is_sample = False
     if not qpath or not qpath.exists():
-        sys.exit("No test questions found. Put the organisers' file in data/test_questions.json (or .jsonl/.csv) "
-                 "or pass --questions PATH. Nothing was evaluated.")
-    questions = load_questions(qpath)[: a.limit]
+        if a.benchmark:
+            questions = BENCHMARK_SAMPLE[: a.limit]
+            is_sample = True
+            qpath = Path("reports/benchmark_sample_queries.json")
+        else:
+            sys.exit("No test questions found. Put the organisers' file in data/test_questions.json (or .jsonl/.csv) "
+                     "or pass --questions PATH. (Or run `python scripts/run_eval.py --benchmark` to measure latency/cost on sample queries).")
+    else:
+        questions = load_questions(qpath)[: a.limit]
     asst = build_assistant()
     out = Path(a.out); out.mkdir(exist_ok=True)
 
@@ -147,8 +171,8 @@ def main():
     (out / "summary.json").write_text(json.dumps(S, indent=2, ensure_ascii=False), encoding="utf-8")
 
     md = [f"# R3 evaluation summary", f"_Generated {S['generated']}_", ""]
-    if asst.is_mock:
-        md += ["> ⚠️ **MOCK DATA.** These numbers describe the sample dataset, not the organisers' catalogue.", ""]
+    if asst.is_mock or is_sample:
+        md += ["> ⚠️ **MOCK DATA & BENCHMARK SAMPLE.** These numbers describe the sample queries and mock dataset, not official organiser files.", ""]
     md += ["| Metric | Value |", "|---|---|"]
     flat = {"Questions run": n, "Answered / clarified / refused": f"{S['behaviour_counts']['answer']} / {S['behaviour_counts']['clarify']} / {S['behaviour_counts']['refuse']}",
             "Validator pass rate": f"{S['validator_pass_rate']:.1%}", "Answers blocked by validator": S["answers_blocked_by_validator"],

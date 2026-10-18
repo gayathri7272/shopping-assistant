@@ -77,6 +77,9 @@ class Reply:
     filters: str = ""
     validation: Validation | None = None
     latency_ms: float = 0.0
+    llm_tokens_in: int = 0
+    llm_tokens_out: int = 0
+    cost_usd: float = 0.0
     cited_ids: list = field(default_factory=list)
     cited_sections: list = field(default_factory=list)
     trace: dict = field(default_factory=dict)
@@ -104,18 +107,102 @@ class Assistant:
     # ------------------------------------------------------------------ public
     def chat(self, session: Session, message: str) -> Reply:
         t0 = time.perf_counter()
+        t_parse_start = time.perf_counter()
         parsed = parse(message, self.vocab)
+        t_parse_ms = (time.perf_counter() - t_parse_start) * 1000
+
+        t_route_start = time.perf_counter()
         reply = self._route(session, parsed)
+        t_route_ms = (time.perf_counter() - t_route_start) * 1000
+
+        t_val_start = time.perf_counter()
         v = validate(reply.text, self.by_id, self.policy.by_label, session.amounts | parsed.user_amounts)
+        t_val_ms = (time.perf_counter() - t_val_start) * 1000
+
         reply.validation = v
         if not v.ok:                                    # last line of defence
             reply = Reply("I couldn't verify that answer against the catalogue and policy, so I'm not showing it "
                           "rather than risk a wrong claim. Please rephrase your question.", "blocked",
                           trace={"blocked_errors": v.errors}, validation=v)
         reply.filters = session.describe()
-        reply.latency_ms = (time.perf_counter() - t0) * 1000
+        total_ms = (time.perf_counter() - t0) * 1000
+        reply.latency_ms = total_ms
+        reply.llm_tokens_in = 0
+        reply.llm_tokens_out = 0
+        reply.cost_usd = 0.0
+        reply.trace.setdefault("timing", {
+            "parse_ms": round(t_parse_ms, 3),
+            "route_ms": round(t_route_ms, 3),
+            "validate_ms": round(t_val_ms, 3),
+            "total_ms": round(total_ms, 3)
+        })
         session.history += [("user", message), ("assistant", reply.text)]
         return reply
+
+    def measure_latency_and_cost(self, queries: list[str]) -> dict:
+        """Runs queries through the assistant and returns an honest latency and token-cost report."""
+        import statistics
+        latencies = []
+        parse_times = []
+        route_times = []
+        val_times = []
+        total_tokens_in = 0
+        total_tokens_out = 0
+        total_cost = 0.0
+        outcomes = {}
+        pass_count = 0
+
+        for q in queries:
+            s = Session()
+            r = self.chat(s, q)
+            lat = r.latency_ms
+            latencies.append(lat)
+            timing = r.trace.get("timing", {})
+            if "parse_ms" in timing: parse_times.append(timing["parse_ms"])
+            if "route_ms" in timing: route_times.append(timing["route_ms"])
+            if "validate_ms" in timing: val_times.append(timing["validate_ms"])
+            total_tokens_in += r.llm_tokens_in
+            total_tokens_out += r.llm_tokens_out
+            total_cost += r.cost_usd
+            outcomes[r.outcome] = outcomes.get(r.outcome, 0) + 1
+            if r.validation and r.validation.ok:
+                pass_count += 1
+
+        n = len(latencies)
+        sorted_lat = sorted(latencies)
+        p50 = sorted_lat[int(0.50 * (n - 1))] if n else 0.0
+        p95 = sorted_lat[int(0.95 * (n - 1))] if n else 0.0
+
+        return {
+            "query_count": n,
+            "is_mock": self.is_mock,
+            "catalogue_products": len(self.products),
+            "embedder": self.embedder_name,
+            "latency_ms": {
+                "mean": round(statistics.mean(latencies), 2) if n else 0.0,
+                "median_p50": round(p50, 2),
+                "p95": round(p95, 2),
+                "min": round(min(latencies), 2) if n else 0.0,
+                "max": round(max(latencies), 2) if n else 0.0,
+            },
+            "latency_breakdown_avg_ms": {
+                "parse_ms": round(statistics.mean(parse_times), 2) if parse_times else 0.0,
+                "route_and_retrieve_ms": round(statistics.mean(route_times), 2) if route_times else 0.0,
+                "validate_ms": round(statistics.mean(val_times), 2) if val_times else 0.0,
+            },
+            "token_usage": {
+                "llm_tokens_in": total_tokens_in,
+                "llm_tokens_out": total_tokens_out,
+                "total_tokens": total_tokens_in + total_tokens_out,
+                "cost_usd": round(total_cost, 4),
+                "note": "Deterministic offline architecture: zero LLM tokens used, $0.00 API cost."
+            },
+            "validation": {
+                "pass_rate": round(pass_count / n, 4) if n else 1.0,
+                "all_passed": pass_count == n
+            },
+            "outcomes": outcomes
+        }
 
     # ------------------------------------------------------------------ routing
     def _route(self, s: Session, p: Parsed) -> Reply:
