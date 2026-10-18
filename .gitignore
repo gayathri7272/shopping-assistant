@@ -1,0 +1,28 @@
+# Python & caches
+__pycache__/
+*.py[cod]
+*$py.class
+.cache/
+*.npy
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Streamlit secrets and environment variables
+.streamlit/secrets.toml
+.env
+*.env
+
+# OS metadata
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Evaluation reports (preserve directory with .gitkeep)
+reports/*
+!reports/.gitkeep
+

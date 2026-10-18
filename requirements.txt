@@ -1,0 +1,4 @@
+numpy>=1.24
+streamlit>=1.36
+# Only if the organisers' embedding model is a sentence-transformers model (check how it is cached):
+# sentence-transformers
